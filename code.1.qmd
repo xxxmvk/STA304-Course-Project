@@ -1,0 +1,93 @@
+---
+title: "Assignment 1"
+author: "group 30"
+format: html
+editor: visual
+---
+
+```{r}
+set.seed(123)
+
+n <- 400
+
+options_clean <- c("Study Techniques", 
+                   "Course Selection & Planning", 
+                   "Pathways to Post-Secondary Education", 
+                   "University Applications & OUAC Guidance", 
+                   "Scholarships & Financial Aid", 
+                   "Extracurriculars & Leadership")
+
+options_messy <- c("Study Techniques", "Study tips", 
+                   "Course Selection & Planning", "Course choices", 
+                   "Pathways to Post-Secondary Education", "Post-secondary path", 
+                   "University Applications & OUAC Guidance", "OUAC guidance", "University Apps", 
+                   "Scholarships & Financial Aid", "Scholarship", "Scholarships", 
+                   "Extracurriculars & Leadership", "Extra activities")
+
+probs <- c(0.20, 0.15, 0.10, 0.30, 0.15, 0.10)
+
+probs_messy <- c(0.15, 0.05,   
+                 0.10, 0.05,   
+                 0.07, 0.03,   
+                 0.20, 0.05, 0.05, 
+                 0.10, 0.03, 0.02,  
+                 0.07, 0.03)        
+
+survey_data <- data.frame(
+  most_helpful = sample(options_messy, size = n, replace = TRUE, prob = probs_messy)
+)
+
+library(dplyr)
+
+survey_data <- survey_data %>%
+  mutate(most_helpful_clean = case_when(
+    most_helpful %in% c("Study Techniques", "Study tips") ~ "Study Techniques",
+    most_helpful %in% c("Course Selection & Planning", "Course choices") ~ "Course Selection & Planning",
+    most_helpful %in% c("Pathways to Post-Secondary Education", "Post-secondary path") ~ "Pathways to Post-Secondary Education",
+    most_helpful %in% c("University Applications & OUAC Guidance", "OUAC guidance", "University Apps") ~ "University Applications & OUAC Guidance",
+    most_helpful %in% c("Scholarships & Financial Aid", "Scholarship", "Scholarships") ~ "Scholarships & Financial Aid",
+    most_helpful %in% c("Extracurriculars & Leadership", "Extra activities") ~ "Extracurriculars & Leadership"
+  ))
+
+library(knitr)
+
+head_table <- head(survey_data, 10)
+
+kable(head_table, caption = "A glimpse of simulated student responses (messy vs. cleaned)")
+
+table_counts <- table(survey_data$most_helpful_clean)
+table_counts
+
+round(prop.table(table_counts), 3)
+```
+
+## Visualization
+
+```{r}
+library(ggplot2)
+
+ggplot(survey_data, aes(x = most_helpful_clean)) +
+  geom_bar(fill = "steelblue") +
+  labs(
+    title = "Which Part of the Handbook is Most Helpful? (Simulated & Cleaned Data)",
+    x = "Handbook Section",
+    y = "Number of Students"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1)
+  )
+```
+
+## Confidence Interval Calculation
+
+```{r}
+x <- table_counts["University Applications & OUAC Guidance"]
+p_hat <- as.numeric(x) / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- 1.96
+ci_lower <- p_hat - z * se
+ci_upper <- p_hat + z * se
+
+c(p_hat = p_hat, CI_lower = ci_lower, CI_upper = ci_upper)
+```

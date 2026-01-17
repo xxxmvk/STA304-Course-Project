@@ -1,0 +1,399 @@
+---
+title: "Poststratified Party Support in the 2021 Canadian Election"
+author: "GROUP 304"
+date: today
+format: pdf
+---
+
+```{r}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(tidyverse)
+library(haven)   # read_dta, as_factor
+library(MASS)    # mvrnorm for simulation intervals
+```
+
+
+
+
+
+
+
+```{r}
+# TODO: change file paths to your real locations
+ces_raw    <- read_dta("2021 Canadian Election Study v2.0.dta")
+census_raw <- read_csv("canada_census2021.csv")
+```
+
+
+```{r}
+ces_clean <- ces_raw %>%
+  # only respondents who reported voting and have valid vote choice
+  filter(pes21_turnout2021 == 1,
+         !is.na(pes21_votechoice2021)) %>%
+  mutate(
+    age = 2021 - cps21_yob
+  ) %>%
+  mutate(
+    age_cat = case_when(
+      age >= 18 & age <= 29 ~ "18-29",
+      age >= 30 & age <= 44 ~ "30-44",
+      age >= 45 & age <= 64 ~ "45-64",
+      age >= 65            ~ "65+",
+      TRUE                 ~ NA_character_
+    )
+  )
+
+# Check original labels once (uncomment and run interactively)
+# table(as_factor(ces_clean$cps21_genderid), useNA = "ifany")
+# table(as_factor(ces_clean$cps21_education), useNA = "ifany")
+# table(as_factor(ces_clean$cps21_province), useNA = "ifany")
+
+ces_clean <- ces_clean %>%
+  mutate(
+    #  numeric code
+    sex = case_when(
+      cps21_genderid == 1 ~ "Male",    # 1 = man
+      cps21_genderid == 2 ~ "Female",  # 2 = woman
+      TRUE ~ NA_character_            # 3,4  NA
+    ),
+    #  codebook 
+    educ3 = case_when(
+      cps21_education %in% 1:5              ~ "HS_or_less",          # <= 
+      cps21_education %in% 6:7              ~ "Some_postsecondary",  # college / 
+      cps21_education %in% 8:11             ~ "University_plus",     # +
+      TRUE                                  ~ NA_character_
+    ),
+    #  numeric code 
+    province = case_when(
+      cps21_province == 5  ~ "NL",   # Newfoundland and Labrador
+      cps21_province == 10 ~ "PE",   # Prince Edward Island
+      cps21_province == 7  ~ "NS",   # Nova Scotia
+      cps21_province == 4  ~ "NB",   # New Brunswick
+      cps21_province == 11 ~ "QC",   # Quebec
+      cps21_province == 9  ~ "ON",   # Ontario
+      cps21_province == 3  ~ "MB",   # Manitoba
+      cps21_province == 12 ~ "SK",   # Saskatchewan
+      cps21_province == 1  ~ "AB",   # Alberta
+      cps21_province == 2  ~ "BC",   # British Columbia
+      cps21_province %in% c(6, 8, 13) ~ "North",  # NWT, Nunavut, Yukon
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(age_cat),
+    !is.na(sex),
+    !is.na(educ3),
+    !is.na(province)
+  ) %>%
+  mutate(
+    age_cat = factor(age_cat, levels = c("18-29", "30-44", "45-64", "65+")),
+    sex     = factor(sex,     levels = c("Female", "Male")),
+    educ3   = factor(educ3,   levels = c("HS_or_less", "Some_postsecondary", "University_plus")),
+    province = factor(
+      province,
+      levels = c("NL","PE","NS","NB","QC","ON","MB","SK","AB","BC","North")
+    )
+  )
+
+# Raw vote factor and party indicators
+# table(as_factor(ces_clean$pes21_votechoice2021))
+
+ces_clean <- ces_clean %>%
+  mutate(
+    vote_factor = as_factor(pes21_votechoice2021),
+    vote_lib = if_else(str_detect(vote_factor, regex("Liberal",      ignore_case = TRUE)), 1L, 0L),
+    vote_con = if_else(str_detect(vote_factor, regex("Conservative", ignore_case = TRUE)), 1L, 0L),
+    vote_ndp = if_else(str_detect(vote_factor, regex("NDP",          ignore_case = TRUE)), 1L, 0L)
+  )
+
+# Align factor levels to what we will use in census
+ces_clean <- ces_clean %>%
+  mutate(
+    age_cat = factor(age_cat, levels = c("18-29", "30-44", "45-64", "65+")),
+    sex     = factor(sex, levels = c("Female", "Male")),
+    educ3   = factor(educ3, levels = c("HS_or_less", "Some_postsecondary", "University_plus")),
+    province = factor(province,
+                      levels = c("NL","PE","NS","NB","QC","ON","MB","SK","AB","BC","North"))
+  )
+```
+
+
+```{r}
+table1_demographics <- bind_rows(
+  ces_clean %>%
+    count(age_cat) %>%
+    mutate(variable = "Age group",
+           level = as.character(age_cat),
+           prop = n / sum(n)) %>%
+    dplyr::select(variable, level, n, prop),
+
+  ces_clean %>%
+    count(sex) %>%
+    mutate(variable = "Sex",
+           level = as.character(sex),
+           prop = n / sum(n)) %>%
+    dplyr::select(variable, level, n, prop),
+
+  ces_clean %>%
+    count(educ3) %>%
+    mutate(variable = "Education",
+           level = as.character(educ3),
+           prop = n / sum(n)) %>%
+    dplyr::select(variable, level, n, prop),
+
+  ces_clean %>%
+    count(province) %>%
+    mutate(variable = "Province",
+           level = as.character(province),
+           prop = n / sum(n)) %>%
+    dplyr::select(variable, level, n, prop)
+)
+
+knitr::kable(table1_demographics,
+             digits = 3,
+             caption = "Table 1: Sample demographics in the CES")
+
+table1_vote <- ces_clean %>%
+  count(vote_factor) %>%
+  mutate(prop = n / sum(n)) %>%
+  arrange(desc(prop))
+
+knitr::kable(table1_vote,
+             digits = 3,
+             caption = "Raw vote choice shares in the CES sample")
+```
+
+
+```{r}
+fig1_vote <- ces_clean %>%
+  ggplot(aes(x = fct_infreq(vote_factor))) +
+  geom_bar() +
+  coord_flip() +
+  labs(x = "Reported 2021 federal vote choice",
+       y = "Count",
+       title = "Figure 1: Distribution of vote choice in the CES sample") +
+  theme_minimal()
+
+fig1_vote
+```
+
+
+```{r}
+census_cells <- census_raw %>%
+  # keep adults 18+ and drop "not available"
+  filter(agegrp >= 7, agegrp <= 21, agegrp != 88) %>%
+  mutate(
+    age_cat = case_when(
+      agegrp %in% c(7, 8, 9)             ~ "18-29",
+      agegrp %in% c(10, 11, 12)          ~ "30-44",
+      agegrp %in% c(13, 14, 15, 16)      ~ "45-64",
+      agegrp %in% c(17, 18, 19, 20, 21)  ~ "65+",
+      TRUE                               ~ NA_character_
+    ),
+    sex = case_when(
+      gender == 1 ~ "Female",   # 1 = Woman+
+      gender == 2 ~ "Male",     # 2 = Man+
+      TRUE        ~ NA_character_
+    ),
+    educ3 = case_when(
+      hdgree %in% c(1, 2)                    ~ "HS_or_less",
+      hdgree %in% c(3, 4, 5, 6, 7)           ~ "Some_postsecondary",
+      hdgree %in% c(8, 9, 10, 11, 12, 13)    ~ "University_plus",
+      TRUE                                   ~ NA_character_
+    ),
+    province = case_when(
+      pr == 10 ~ "NL",
+      pr == 11 ~ "PE",
+      pr == 12 ~ "NS",
+      pr == 13 ~ "NB",
+      pr == 24 ~ "QC",
+      pr == 35 ~ "ON",
+      pr == 46 ~ "MB",
+      pr == 47 ~ "SK",
+      pr == 48 ~ "AB",
+      pr == 59 ~ "BC",
+      pr == 70 ~ "North",
+      TRUE     ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(age_cat),
+    !is.na(sex),
+    !is.na(educ3),
+    !is.na(province)
+  ) %>%
+  mutate(
+    age_cat = factor(age_cat, levels = c("18-29","30-44","45-64","65+")),
+    sex     = factor(sex, levels = c("Female","Male")),
+    educ3   = factor(educ3, levels = c("HS_or_less","Some_postsecondary","University_plus")),
+    province = factor(province,
+                      levels = c("NL","PE","NS","NB","QC","ON","MB","SK","AB","BC","North"))
+  ) %>%
+  count(province, sex, age_cat, educ3, name = "N_j")
+
+N_total <- sum(census_cells$N_j)
+N_total
+```
+
+
+
+\in
+$$
+Y_{iP} =
+\begin{aligned}
+&1 \quad \text{if respondent } i \text{ reports voting for party } P,\\
+&0 \quad \text{otherwise.}
+\end{aligned}
+$$
+
+$X$
+$$
+\Pr(Y_{iP} = 1 \mid X_i) = p_{iP},
+$$
+$$
+\log\left(\frac{p_{iP}}{1 - p_{iP}}\right)
+  = \beta_{0P}
+  + \beta_{1P}\,\text{(age group)}_i
+  + \beta_{2P}\,\text{(sex)}_i
+  + \beta_{3P}\,\text{(education)}_i
+  + \beta_{4P}\,\text{(province)}_i.
+$$
+
+$$
+\log\left(\frac{p_{iP}}{1 - p_{iP}}\right)
+  = \beta_{0P}
+  + \beta_{1P}\,\text{(age group)}_i
+  + \beta_{2P}\,\text{(sex)}_i
+  + \beta_{3P}\,\text{(education)}_i
+  + \beta_{4P}\,\text{(province)}_i.
+$$
+
+$$
+\hat{y}_{	ext{PS},P}
+  = \sum_{j=1}^J \hat{p}_{jP}\,brac{N_j}{N}.
+$$
+
+
+
+
+
+```{r}
+# Ensure CES factor levels match census levels
+ces_for_model <- ces_clean %>%
+  mutate(
+    age_cat  = factor(age_cat,  levels = levels(census_cells$age_cat)),
+    sex      = factor(sex,      levels = levels(census_cells$sex)),
+    educ3    = factor(educ3,    levels = levels(census_cells$educ3)),
+    province = factor(province, levels = levels(census_cells$province))
+  )
+
+#  2 
+vars_all <- c("age_cat", "sex", "educ3", "province")
+
+vars_use <- vars_all[sapply(ces_for_model[vars_all], function(x) {
+  #  NA 
+  length(unique(na.omit(x))) > 1
+})]
+
+# 
+form_lib <- as.formula(paste("vote_lib ~", paste(vars_use, collapse = " + ")))
+form_con <- as.formula(paste("vote_con ~", paste(vars_use, collapse = " + ")))
+form_ndp <- as.formula(paste("vote_ndp ~", paste(vars_use, collapse = " + ")))
+
+#  logistic 
+mod_lib <- glm(form_lib, data = ces_for_model, family = binomial())
+mod_con <- glm(form_con, data = ces_for_model, family = binomial())
+mod_ndp <- glm(form_ndp, data = ces_for_model, family = binomial())
+
+summary(mod_lib)
+
+
+```
+
+
+```{r, include=FALSE}
+#  terms census  RHS
+X_pop_lib <- model.matrix(delete.response(terms(mod_lib)), census_cells)
+X_pop_con <- model.matrix(delete.response(terms(mod_con)), census_cells)
+X_pop_ndp <- model.matrix(delete.response(terms(mod_ndp)), census_cells)
+
+N_j <- census_cells$N_j  #  cell 
+
+# 
+beta_lib <- coef(mod_lib)
+beta_con <- coef(mod_con)
+beta_ndp <- coef(mod_ndp)
+
+#  cell 
+p_hat_lib_j <- plogis(as.vector(X_pop_lib %*% beta_lib))
+p_hat_con_j <- plogis(as.vector(X_pop_con %*% beta_con))
+p_hat_ndp_j <- plogis(as.vector(X_pop_ndp %*% beta_ndp))
+
+# poststratified  popular vote 
+lib_ps <- sum(p_hat_lib_j * N_j) / N_total
+con_ps <- sum(p_hat_con_j * N_j) / N_total
+ndp_ps <- sum(p_hat_ndp_j * N_j) / N_total
+
+#  95% 
+set.seed(123)
+S <- 1000
+
+beta_sim_lib <- mvrnorm(S, mu = beta_lib, Sigma = vcov(mod_lib))
+beta_sim_con <- mvrnorm(S, mu = beta_con, Sigma = vcov(mod_con))
+beta_sim_ndp <- mvrnorm(S, mu = beta_ndp, Sigma = vcov(mod_ndp))
+
+#  X_pop_*  (J × p)beta_sim_*  (S × p) t(beta_sim_*)  (p × S)
+p_hat_sim_lib <- plogis(X_pop_lib %*% t(beta_sim_lib))   # : J × S
+p_hat_sim_con <- plogis(X_pop_con %*% t(beta_sim_con))
+p_hat_sim_ndp <- plogis(X_pop_ndp %*% t(beta_sim_ndp))
+
+#  scrossprod = t(X) %*% y
+lib_ps_sim <- as.vector(crossprod(p_hat_sim_lib, N_j) / N_total)  #  S
+con_ps_sim <- as.vector(crossprod(p_hat_sim_con, N_j) / N_total)
+ndp_ps_sim <- as.vector(crossprod(p_hat_sim_ndp, N_j) / N_total)
+
+lib_ci <- quantile(lib_ps_sim, probs = c(0.025, 0.975))
+con_ci <- quantile(con_ps_sim, probs = c(0.025, 0.975))
+ndp_ci <- quantile(ndp_ps_sim, probs = c(0.025, 0.975))
+
+results_ps <- tibble(
+  party = c("Liberal", "Conservative", "NDP"),
+  ps    = c(lib_ps, con_ps, ndp_ps),
+  lower = c(lib_ci[1], con_ci[1], ndp_ci[1]),
+  upper = c(lib_ci[2], con_ci[2], ndp_ci[2])
+) %>%
+  mutate(
+    ps_pct    = ps * 100,
+    lower_pct = lower * 100,
+    upper_pct = upper * 100
+  )
+```
+
+
+
+
+
+
+```{r}
+knitr::kable(results_ps,
+             digits = 1,
+             caption = "Table 2: Poststratified national popular-vote estimates for three parties")
+
+fig2_ps <- results_ps %>%
+  ggplot(aes(x = party, y = ps_pct)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower_pct, ymax = upper_pct), width = 0.15) +
+  labs(
+    x = "Party",
+    y = "Poststratified popular vote (%)",
+    title = "Figure 2: Poststratified national popular-vote estimates"
+  ) +
+  theme_minimal()
+
+fig2_ps
+```
